@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Halo glow -->
+    <path
+        android:fillColor="#33FFC174"
+        android:pathData="M54,26 C68,26 80,31 80,31 C80,55 69,72 54,82 C39,72 28,55 28,31 C28,31 40,26 54,26 Z" />
+    <!-- Shield body -->
+    <path
+        android:fillColor="#2A2445"
+        android:strokeColor="#FFC174"
+        android:strokeWidth="2.5"
+        android:pathData="M54,29 C66,29 76,33 76,33 C76,53 66,69 54,77 C42,69 32,53 32,33 C32,33 42,29 54,29 Z" />
+    <!-- Inner orbital ring -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#56E5A9"
+        android:strokeWidth="1.5"
+        android:strokeLineCap="round"
+        android:pathData="M38,48 A18,18 0 1,1 70,48" />
+    <!-- Radiant Star in Center -->
+    <path
+        android:fillColor="#FFC174"
+        android:pathData="M54,39 L57.1,45.3 L64,46.3 L59,51.2 L60.2,58.1 L54,54.8 L47.8,58.1 L49,51.2 L44,46.3 L50.9,45.3 Z" />
+</vector>

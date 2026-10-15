@@ -1,0 +1,6 @@
+{
+  "name": "Aether Focus",
+  "description": "Mindful screen-time blocker with celestial star economy, strict interval shields, and focus safeguards.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
