@@ -39,7 +39,6 @@ fun BlockedAppsScreen(
 
     var searchQuery by remember { mutableStateOf("") }
     var currentFilter by remember { mutableStateOf(AppFilter.ALL) }
-    var isSimulatingError by remember { mutableStateOf(false) }
 
     val filteredApps = apps.filter { app ->
         val matchesQuery = searchQuery.isEmpty() ||
@@ -237,60 +236,7 @@ fun BlockedAppsScreen(
             }
         }
 
-        // Error State View Simulation (if active)
-        if (isSimulatingError) {
-            GlassCard(
-                cornerRadius = 20.dp,
-                backgroundColor = ErrorContainerRed.copy(alpha = 0.25f),
-                borderColor = ErrorRed.copy(alpha = 0.4f),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(12.dp)
-                ) {
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier
-                            .size(48.dp)
-                            .clip(CircleShape)
-                            .background(ErrorContainerRed.copy(alpha = 0.4f))
-                    ) {
-                        Icon(Icons.Filled.SyncProblem, contentDescription = null, tint = ErrorRed, modifier = Modifier.size(28.dp))
-                    }
-                    Text(
-                        text = "Sync Interrupted",
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = ErrorRed
-                    )
-                    Text(
-                        text = "Failed to sync installed packages with system framework.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = OnSurfaceVariant
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(
-                            onClick = { isSimulatingError = false },
-                            colors = ButtonDefaults.buttonColors(containerColor = StarGoldPrimaryContainer),
-                            shape = CircleShape
-                        ) {
-                            Icon(Icons.Filled.Cached, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Retry Sync", color = OnPrimary)
-                        }
-                        OutlinedButton(
-                            onClick = { isSimulatingError = false },
-                            shape = CircleShape
-                        ) {
-                            Text("Dismiss", color = OnSurface)
-                        }
-                    }
-                }
-            }
-        }
+
 
         // Section 1: System Protected Core (Phone, Contacts)
         if (systemApps.isNotEmpty()) {
@@ -518,45 +464,6 @@ fun BlockedAppsScreen(
             }
         }
 
-        // Interactive State Preview Dock
-        Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = SurfaceContainerLowest.copy(alpha = 0.6f),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("INTERACTIVE PREVIEWS", style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp), color = OnSurfaceVariant)
-                    Text("Live Switcher", style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp), color = StarGoldPrimary)
-                }
-
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    OutlinedButton(
-                        onClick = { searchQuery = "xyz" },
-                        shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(Icons.Filled.SearchOff, contentDescription = null, modifier = Modifier.size(14.dp), tint = StarGoldPrimary)
-                        Spacer(Modifier.width(4.dp))
-                        Text("Empty Search", style = MaterialTheme.typography.labelSmall, color = OnSurface)
-                    }
-
-                    OutlinedButton(
-                        onClick = { isSimulatingError = !isSimulatingError },
-                        shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(Icons.Filled.ErrorOutline, contentDescription = null, modifier = Modifier.size(14.dp), tint = ErrorRed)
-                        Spacer(Modifier.width(4.dp))
-                        Text("Sync Error", style = MaterialTheme.typography.labelSmall, color = OnSurface)
-                    }
-                }
-            }
-        }
 
         Spacer(Modifier.height(60.dp))
     }

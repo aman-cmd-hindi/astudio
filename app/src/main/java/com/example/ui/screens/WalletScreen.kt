@@ -35,11 +35,9 @@ fun WalletScreen(
     val wallet by viewModel.wallet.collectAsState()
 
     var activeFilter by remember { mutableStateOf(LedgerFilter.ALL) }
-    var isSimulatingEmpty by remember { mutableStateOf(false) }
 
-    val filteredLedger = remember(wallet.ledger, activeFilter, isSimulatingEmpty) {
-        if (isSimulatingEmpty) emptyList()
-        else when (activeFilter) {
+    val filteredLedger = remember(wallet.ledger, activeFilter) {
+        when (activeFilter) {
             LedgerFilter.ALL -> wallet.ledger
             LedgerFilter.EARNED -> wallet.ledger.filter { it.starsDelta > 0 }
             LedgerFilter.SPENT -> wallet.ledger.filter { it.starsDelta < 0 }
@@ -315,21 +313,6 @@ fun WalletScreen(
                     )
                 }
             }
-
-            IconButton(
-                onClick = { isSimulatingEmpty = !isSimulatingEmpty },
-                colors = IconButtonDefaults.iconButtonColors(
-                    containerColor = if (isSimulatingEmpty) StarGoldPrimary else SurfaceContainerHighest
-                ),
-                modifier = Modifier.size(34.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.SwapHoriz,
-                    contentDescription = "Toggle Empty State",
-                    tint = if (isSimulatingEmpty) OnPrimary else OnSurfaceVariant,
-                    modifier = Modifier.size(18.dp)
-                )
-            }
         }
 
         // Ledger List Items
@@ -356,17 +339,10 @@ fun WalletScreen(
                     }
                     Text("No transactions yet", style = MaterialTheme.typography.headlineSmall, color = OnSurface)
                     Text(
-                        text = "Start your first focus session to earn stars.",
+                        text = "Complete your daily habits or stay within focus intervals to earn stars.",
                         style = MaterialTheme.typography.bodySmall,
                         color = OnSurfaceVariant
                     )
-                    Button(
-                        onClick = { isSimulatingEmpty = false },
-                        colors = ButtonDefaults.buttonColors(containerColor = StarGoldPrimary),
-                        shape = CircleShape
-                    ) {
-                        Text("Show Transaction Ledger", color = OnPrimary)
-                    }
                 }
             }
         } else {

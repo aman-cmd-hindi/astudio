@@ -1,10 +1,15 @@
 package com.example.viewmodel
 
 import android.app.Application
+import android.app.usage.UsageStatsManager
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.FocusRepository
 import com.example.model.*
+import com.example.service.PermissionManager
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -12,20 +17,25 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
+import com.example.auth.AuthManager
+import com.example.supabase.SupabaseRepository
 
 class FocusViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = FocusRepository(application)
+    private val authManager = AuthManager.getInstance(application)
+    private val supabaseRepository = SupabaseRepository.getInstance(application, repository)
+
+    // Current User & Cloud Persistence
+    val currentUser: StateFlow<AuthUser?> = authManager.currentUser
+    val authError: StateFlow<String?> = authManager.authError
+    val isAuthLoading: StateFlow<Boolean> = authManager.isLoading
+    val cloudSyncStatus: StateFlow<CloudSyncStatus> = supabaseRepository.syncStatus
+    val isSupabaseConfigured: Boolean get() = supabaseRepository.isConfigured()
+    val supabaseUrl: String get() = supabaseRepository.getProjectUrl()
 
     // Current Navigation Tab
     private val _currentTab = MutableStateFlow(ScreenTab.HOME)
     val currentTab: StateFlow<ScreenTab> = _currentTab.asStateFlow()
-
-    // Simulated Clock / Time Machine
-    private val _simulatedTimeMillis = MutableStateFlow(System.currentTimeMillis())
-    val simulatedTimeMillis: StateFlow<Long> = _simulatedTimeMillis.asStateFlow()
-
-    private val _isDemoControlsExpanded = MutableStateFlow(false)
-    val isDemoControlsExpanded: StateFlow<Boolean> = _isDemoControlsExpanded.asStateFlow()
 
     // App State
     private val _apps = MutableStateFlow<List<AppItem>>(emptyList())
@@ -40,13 +50,29 @@ class FocusViewModel(application: Application) : AndroidViewModel(application) {
     private val _permissions = MutableStateFlow<List<PermissionItem>>(emptyList())
     val permissions: StateFlow<List<PermissionItem>> = _permissions.asStateFlow()
 
-    // Screen Time Telemetry
+    // Celestial Streak & Milestones
+    val streakMilestones = listOf(
+        StreakMilestone(daysRequired = 3, bonusStars = 2, title = "3-Day Starlight Spark", description = "+2 bonus stars for 3 days"),
+        StreakMilestone(daysRequired = 7, bonusStars = 5, title = "7-Day Orbit Sanctuary", description = "+5 bonus stars for 1 full week"),
+        StreakMilestone(daysRequired = 14, bonusStars = 10, title = "14-Day Cosmic Harmony", description = "+10 bonus stars for 2 weeks"),
+        StreakMilestone(daysRequired = 30, bonusStars = 25, title = "30-Day Master of Time", description = "+25 bonus stars for 1 month")
+    )
+
+    private val _streak = MutableStateFlow(CelestialStreak())
+    val streak: StateFlow<CelestialStreak> = _streak.asStateFlow()
+
+    // Habit Tracker
+    private val _habits = MutableStateFlow<List<HabitItem>>(emptyList())
+    val habits: StateFlow<List<HabitItem>> = _habits.asStateFlow()
+
+    // Screen Time Telemetry (Default 40 hours 22 minutes user-adjustable benchmark)
     private val _screenTimeData = MutableStateFlow(
         ScreenTimeData(
             usageSinceLastCheckMinutes = 18,
             maxUsageSinceLastCheckLimitMinutes = 45,
             thisWeekDailyAvgMinutes = 135,
-            dailyThresholdMinutes = 150,
+            dailyThresholdMinutes = 346,
+            targetConfig = ScreenTimeTargetConfig(40, 22),
             lastWeekAvgMinutes = 220,
             totalWeeklyMinutes = 862,
             dailyBars = listOf(
@@ -57,7 +83,8 @@ class FocusViewModel(application: Application) : AndroidViewModel(application) {
                 DailyUsageBar("F", 185, "3h 05m"),
                 DailyUsageBar("S", 160, "2h 40m"),
                 DailyUsageBar("S", 154, "2h 34m", isToday = true, isHighlighted = true)
-            )
+            ),
+            isRealDataActive = false
         )
     )
     val screenTimeData: StateFlow<ScreenTimeData> = _screenTimeData.asStateFlow()
@@ -69,43 +96,224 @@ class FocusViewModel(application: Application) : AndroidViewModel(application) {
     private val _unlockConfirmationApp = MutableStateFlow<AppItem?>(null)
     val unlockConfirmationApp: StateFlow<AppItem?> = _unlockConfirmationApp.asStateFlow()
 
-    // Simulated open app view (when unlocked or free)
-    private val _currentlyOpenSimulatedApp = MutableStateFlow<AppItem?>(null)
-    val currentlyOpenSimulatedApp: StateFlow<AppItem?> = _currentlyOpenSimulatedApp.asStateFlow()
-
     // Toast message for user actions
     private val _toastMessage = MutableStateFlow<String?>(null)
     val toastMessage: StateFlow<String?> = _toastMessage.asStateFlow()
 
-    // 30-second recurring tick for interval evaluation
     init {
         loadData()
+        syncPermissionsWithSystem()
+        queryUsageStatsIfPermitted()
         startPeriodicTicker()
     }
 
-    private fun loadData() {
-        _apps.value = repository.getInitialApps()
+    fun loadData() {
+        val targetConfig = repository.getScreenTimeTarget()
         _schedule.value = repository.getSchedule()
         _wallet.value = repository.getWallet()
-        _permissions.value = repository.getPermissions()
+        _streak.value = repository.getCelestialStreak()
+        _habits.value = repository.getHabits()
+
+        // Load apps merged with device package manager
+        loadAndMergeInstalledApps()
+
+        // Update initial screen time target
+        _screenTimeData.value = _screenTimeData.value.copy(
+            targetConfig = targetConfig,
+            dailyThresholdMinutes = targetConfig.dailyAverageTargetMinutes
+        )
+    }
+
+    private fun loadAndMergeInstalledApps() {
+        val savedApps = repository.getInitialApps()
+        val savedMap = savedApps.associateBy { it.id }
+
+        val context = getApplication<Application>()
+        val pm = context.packageManager
+        val mainIntent = Intent(Intent.ACTION_MAIN, null).apply {
+            addCategory(Intent.CATEGORY_LAUNCHER)
+        }
+
+        val resolvedList = pm.queryIntentActivities(mainIntent, 0)
+        val combinedApps = mutableListOf<AppItem>()
+
+        // System Protected Essentials (Always Allowed)
+        combinedApps.add(
+            AppItem(
+                id = "com.android.dialer",
+                name = "Phone",
+                category = "System Core",
+                avgDailyUsage = "Emergency Ready",
+                usageMinutes = 12,
+                limitMinutes = 120,
+                blocked = false,
+                isSystemProtected = true,
+                iconKey = "phone"
+            )
+        )
+        combinedApps.add(
+            AppItem(
+                id = "com.android.contacts",
+                name = "Contacts",
+                category = "System Core",
+                avgDailyUsage = "Essential Hub",
+                usageMinutes = 8,
+                limitMinutes = 120,
+                blocked = false,
+                isSystemProtected = true,
+                iconKey = "contacts"
+            )
+        )
+
+        val seenPackages = mutableSetOf("com.android.dialer", "com.android.contacts", context.packageName)
+
+        // Read real installed launcher packages
+        for (ri in resolvedList) {
+            val pkg = ri.activityInfo.packageName
+            if (pkg in seenPackages) continue
+            seenPackages.add(pkg)
+
+            val appName = ri.loadLabel(pm).toString()
+            val existing = savedMap[pkg] ?: savedMap.values.firstOrNull { it.name.equals(appName, ignoreCase = true) }
+
+            combinedApps.add(
+                AppItem(
+                    id = pkg,
+                    name = appName,
+                    category = existing?.category ?: "Installed Application",
+                    avgDailyUsage = existing?.avgDailyUsage ?: "Active",
+                    usageMinutes = existing?.usageMinutes ?: 30,
+                    limitMinutes = existing?.limitMinutes ?: 120,
+                    blocked = existing?.blocked ?: false,
+                    isSystemProtected = existing?.isSystemProtected ?: false,
+                    unlockedUntilEpochMillis = existing?.unlockedUntilEpochMillis,
+                    iconKey = existing?.iconKey ?: "default"
+                )
+            )
+        }
+
+        // Also add any popular target apps from saved list that might not be on an emulator
+        for (saved in savedApps) {
+            if (saved.id !in seenPackages && !saved.isSystemProtected) {
+                seenPackages.add(saved.id)
+                combinedApps.add(saved)
+            }
+        }
+
+        _apps.value = combinedApps
+        repository.saveApps(combinedApps)
+    }
+
+    fun syncPermissionsWithSystem() {
+        val context = getApplication<Application>()
+        val liveStatus = PermissionManager.getLiveStatus(context)
+
+        val items = listOf(
+            PermissionItem(
+                key = "admin",
+                title = "Device Admin",
+                description = "Prevents circumventing active focus blocks or uninstalling during scheduled restriction intervals.",
+                granted = liveStatus["admin"] ?: false,
+                iconType = "lock_clock",
+                statusLabel = if (liveStatus["admin"] == true) "Active" else "Pending",
+                tagLine = "Anti-uninstall persistence"
+            ),
+            PermissionItem(
+                key = "accessibility",
+                title = "Accessibility Service",
+                description = "Enforces restriction shields immediately when configured blocked apps are opened.",
+                granted = liveStatus["accessibility"] ?: false,
+                iconType = "shield",
+                statusLabel = if (liveStatus["accessibility"] == true) "Active" else "Pending",
+                tagLine = "Real-time foreground interception"
+            ),
+            PermissionItem(
+                key = "usage",
+                title = "Screen-Time Analysis",
+                description = "Reads foreground app usage stats to compute daily/weekly progress against your benchmark.",
+                granted = liveStatus["usage"] ?: false,
+                iconType = "query_stats",
+                statusLabel = if (liveStatus["usage"] == true) "Active" else "Pending",
+                tagLine = "PACKAGE_USAGE_STATS telemetry"
+            ),
+            PermissionItem(
+                key = "overlay",
+                title = "Display Over Other Apps",
+                description = "Renders the full-screen restriction shield over blocked applications.",
+                granted = liveStatus["overlay"] ?: false,
+                iconType = "layers",
+                statusLabel = if (liveStatus["overlay"] == true) "Active" else "Pending",
+                tagLine = "SYSTEM_ALERT_WINDOW permission"
+            ),
+            PermissionItem(
+                key = "battery",
+                title = "Battery Exemption",
+                description = "Ensures background restriction monitors and interval timers run without OS sleep termination.",
+                granted = liveStatus["battery"] ?: false,
+                iconType = "battery_saver",
+                statusLabel = if (liveStatus["battery"] == true) "Active" else "Pending",
+                tagLine = "REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"
+            ),
+            PermissionItem(
+                key = "notif",
+                title = "Notifications",
+                description = "Alerts you prior to downtime schedules and announces milestone starlight rewards.",
+                granted = liveStatus["notif"] ?: false,
+                iconType = "notifications_active",
+                statusLabel = if (liveStatus["notif"] == true) "Active" else "Pending",
+                tagLine = "POST_NOTIFICATIONS"
+            )
+        )
+        _permissions.value = items
+    }
+
+    fun queryUsageStatsIfPermitted() {
+        val context = getApplication<Application>()
+        if (!PermissionManager.isUsageAccessGranted(context)) return
+
+        try {
+            val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager ?: return
+            val cal = Calendar.getInstance()
+            val endTime = cal.timeInMillis
+            cal.add(Calendar.DAY_OF_YEAR, -7)
+            val startTime = cal.timeInMillis
+
+            val stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_WEEKLY, startTime, endTime)
+            var totalWeeklyMillis = 0L
+            if (!stats.isNullOrEmpty()) {
+                for (s in stats) {
+                    if (s.totalTimeInForeground > 30_000L) {
+                        totalWeeklyMillis += s.totalTimeInForeground
+                    }
+                }
+            }
+
+            if (totalWeeklyMillis > 0) {
+                val totalMins = (totalWeeklyMillis / (1000 * 60)).toInt()
+                val avgMins = (totalMins / 7).coerceAtLeast(1)
+                _screenTimeData.value = _screenTimeData.value.copy(
+                    totalWeeklyMinutes = totalMins,
+                    thisWeekDailyAvgMinutes = avgMins,
+                    isRealDataActive = true
+                )
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     private fun startPeriodicTicker() {
         viewModelScope.launch {
             while (true) {
                 delay(30_000)
-                // Trigger interval re-evaluation
                 evaluateCurrentInterval()
+                syncPermissionsWithSystem()
             }
         }
     }
 
     fun setTab(tab: ScreenTab) {
         _currentTab.value = tab
-    }
-
-    fun toggleDemoControls() {
-        _isDemoControlsExpanded.value = !_isDemoControlsExpanded.value
     }
 
     fun showToast(msg: String) {
@@ -121,7 +329,7 @@ class FocusViewModel(application: Application) : AndroidViewModel(application) {
     // -------------------------------------------------------------
     // Interval Calculation Logic (Timezone-Aware & Overnight Window)
     // -------------------------------------------------------------
-    fun isWithinInterval(nowMillis: Long = _simulatedTimeMillis.value): Boolean {
+    fun isWithinInterval(nowMillis: Long = System.currentTimeMillis()): Boolean {
         val config = _schedule.value
         if (!config.enabled) return false
 
@@ -131,26 +339,20 @@ class FocusViewModel(application: Application) : AndroidViewModel(application) {
         val currentMinute = cal.get(Calendar.MINUTE)
         val currentMinsOfDay = currentHour * 60 + currentMinute
 
-        // Convert Schedule Start to 24h minutes
         var startHour24 = config.startHour % 12
         if (config.startPeriod.equals("PM", ignoreCase = true)) startHour24 += 12
         val startMins = startHour24 * 60 + config.startMinute
 
-        // Convert Schedule End to 24h minutes
         var endHour24 = config.endHour % 12
         if (config.endPeriod.equals("PM", ignoreCase = true)) endHour24 += 12
         val endMins = endHour24 * 60 + config.endMinute
 
         return if (startMins <= endMins) {
-            // Same-day window (e.g. 9:00 AM to 5:00 PM)
             config.activeDays.contains(currentDay) && (currentMinsOfDay in startMins until endMins)
         } else {
-            // Overnight window (e.g. 10:00 PM to 8:00 AM)
             if (currentMinsOfDay >= startMins) {
-                // In the evening portion of the window
                 config.activeDays.contains(currentDay)
             } else if (currentMinsOfDay < endMins) {
-                // In the morning portion of the window, belongs to previous day's schedule
                 val prevDay = if (currentDay == Calendar.SUNDAY) Calendar.SATURDAY else currentDay - 1
                 config.activeDays.contains(prevDay)
             } else {
@@ -159,7 +361,7 @@ class FocusViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun getRemainingIntervalText(nowMillis: Long = _simulatedTimeMillis.value): String {
+    fun getRemainingIntervalText(nowMillis: Long = System.currentTimeMillis()): String {
         val config = _schedule.value
         if (!config.enabled || !isWithinInterval(nowMillis)) return "Free Window"
 
@@ -181,8 +383,7 @@ class FocusViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun evaluateCurrentInterval() {
-        // Check if any temporarily unlocked app has expired
-        val now = _simulatedTimeMillis.value
+        val now = System.currentTimeMillis()
         var changed = false
         val updated = _apps.value.map { app ->
             if (app.unlockedUntilEpochMillis != null && now >= app.unlockedUntilEpochMillis) {
@@ -195,12 +396,6 @@ class FocusViewModel(application: Application) : AndroidViewModel(application) {
         if (changed) {
             _apps.value = updated
             repository.saveApps(updated)
-            // If the currently open app's unlock window ended and interval is active, trigger shield!
-            val openApp = _currentlyOpenSimulatedApp.value
-            if (openApp != null && openApp.blocked && isWithinInterval(now)) {
-                _currentlyOpenSimulatedApp.value = null
-                _activeShieldApp.value = openApp
-            }
         }
     }
 
@@ -210,7 +405,7 @@ class FocusViewModel(application: Application) : AndroidViewModel(application) {
     fun evaluatePayoutConditions(): List<PayoutCondition> {
         val st = _screenTimeData.value
         val condition1 = st.usageSinceLastCheckMinutes < 60
-        val condition2 = st.totalWeeklyMinutes < 600
+        val condition2 = st.totalWeeklyMinutes < st.targetConfig.totalMinutes
         val condition3 = st.thisWeekDailyAvgMinutes < st.lastWeekAvgMinutes
 
         return listOf(
@@ -224,11 +419,11 @@ class FocusViewModel(application: Application) : AndroidViewModel(application) {
             ),
             PayoutCondition(
                 id = "weekly_total",
-                title = "Weekly usage under 10 hours",
-                subtitle = "${st.totalWeeklyMinutes / 60}h ${st.totalWeeklyMinutes % 60}m recorded (Target: < 10h)",
+                title = "Weekly usage under target (${st.targetConfig.targetHours}h ${st.targetConfig.targetMinutes}m)",
+                subtitle = "${st.totalWeeklyMinutes / 60}h ${st.totalWeeklyMinutes % 60}m recorded (Target: ${st.targetConfig.targetHours}h ${st.targetConfig.targetMinutes}m)",
                 isMet = condition2,
                 statusText = if (condition2) "Met" else "Unmet",
-                failedReason = if (!condition2) "Weekly usage exceeded 10h" else null
+                failedReason = if (!condition2) "Weekly usage exceeded ${st.targetConfig.targetHours}h ${st.targetConfig.targetMinutes}m" else null
             ),
             PayoutCondition(
                 id = "lower_than_prev",
@@ -255,7 +450,7 @@ class FocusViewModel(application: Application) : AndroidViewModel(application) {
                     title = "Weekly Low Usage Bounty",
                     source = "Weekly Goal Met",
                     starsDelta = starsEarned,
-                    timestampFormatted = SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()).format(Date(_simulatedTimeMillis.value)),
+                    timestampFormatted = SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()).format(Date()),
                     note = "All 3 mindful conditions fulfilled"
                 )
             ) + _wallet.value.ledger
@@ -271,38 +466,61 @@ class FocusViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // -------------------------------------------------------------
+    // Screen Time Benchmark Adjustment (Default 40h 22m)
+    // -------------------------------------------------------------
+    fun updateScreenTimeTarget(hours: Int, minutes: Int) {
+        val newTarget = ScreenTimeTargetConfig(targetHours = hours.coerceAtLeast(1), targetMinutes = minutes.coerceIn(0, 59))
+        repository.saveScreenTimeTarget(newTarget)
+        _screenTimeData.value = _screenTimeData.value.copy(
+            targetConfig = newTarget,
+            dailyThresholdMinutes = newTarget.dailyAverageTargetMinutes
+        )
+        showToast("Screen-time analysis target updated: ${newTarget.targetHours}h ${newTarget.targetMinutes}m")
+    }
+
+    // -------------------------------------------------------------
     // App Launch, Shield & Early Unlock Flow
     // -------------------------------------------------------------
-    fun launchApp(app: AppItem) {
-        val now = _simulatedTimeMillis.value
+    fun launchApp(app: AppItem, context: Context? = null) {
+        val now = System.currentTimeMillis()
 
         if (app.isSystemProtected || !app.blocked) {
-            // Free to open
-            _activeShieldApp.value = null
-            _currentlyOpenSimulatedApp.value = app
+            launchActualApp(app, context)
             return
         }
 
-        // App is configured as blocked
         if (isWithinInterval(now)) {
-            // Check if temporarily unlocked
             if (app.unlockedUntilEpochMillis != null && now < app.unlockedUntilEpochMillis) {
-                _activeShieldApp.value = null
-                _currentlyOpenSimulatedApp.value = app
+                launchActualApp(app, context)
             } else {
-                // Strict restriction: Show full-screen Shield!
-                _currentlyOpenSimulatedApp.value = null
                 _activeShieldApp.value = app
             }
         } else {
-            // Interval is currently inactive: Allowed freely
-            _activeShieldApp.value = null
-            _currentlyOpenSimulatedApp.value = app
+            launchActualApp(app, context)
         }
     }
 
-    fun closeSimulatedApp() {
-        _currentlyOpenSimulatedApp.value = null
+    private fun launchActualApp(app: AppItem, context: Context?) {
+        val ctx = context ?: getApplication<Application>()
+        val pm = ctx.packageManager
+        val launchIntent = pm.getLaunchIntentForPackage(app.id)
+        if (launchIntent != null) {
+            launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            try {
+                ctx.startActivity(launchIntent)
+            } catch (e: Exception) {
+                showToast("Opening ${app.name}...")
+            }
+        } else {
+            showToast("${app.name} opened")
+        }
+    }
+
+    fun showShieldForPackage(pkgName: String) {
+        val match = _apps.value.firstOrNull { it.id == pkgName || it.name.equals(pkgName, ignoreCase = true) }
+        if (match != null) {
+            _activeShieldApp.value = match
+        }
     }
 
     fun dismissShield() {
@@ -318,16 +536,15 @@ class FocusViewModel(application: Application) : AndroidViewModel(application) {
         _unlockConfirmationApp.value = null
     }
 
-    fun confirmUnlockWithStars(app: AppItem, cost: Int = 5) {
+    fun confirmUnlockWithStars(app: AppItem, cost: Int = 5, context: Context? = null) {
         if (_wallet.value.balance < cost) {
             showToast("Not enough stars! Need $cost stars.")
             return
         }
 
-        val now = _simulatedTimeMillis.value
-        val unlockDurationMillis = 15 * 60 * 1000L // 15-minute pass
+        val now = System.currentTimeMillis()
+        val unlockDurationMillis = 15 * 60 * 1000L
 
-        // Deduct stars
         val newBalance = _wallet.value.balance - cost
         val newLedger = listOf(
             LedgerItem(
@@ -344,19 +561,18 @@ class FocusViewModel(application: Application) : AndroidViewModel(application) {
         _wallet.value = updatedWallet
         repository.saveWallet(updatedWallet)
 
-        // Mark app as unlocked until duration
         val updatedApps = _apps.value.map {
             if (it.id == app.id) it.copy(unlockedUntilEpochMillis = now + unlockDurationMillis) else it
         }
         _apps.value = updatedApps
         repository.saveApps(updatedApps)
 
-        // Dismiss shield and launch app!
         _unlockConfirmationApp.value = null
         _activeShieldApp.value = null
+
         val updatedApp = updatedApps.first { it.id == app.id }
-        _currentlyOpenSimulatedApp.value = updatedApp
         showToast("Unlocked ${app.name} for 15 minutes!")
+        launchActualApp(updatedApp, context)
     }
 
     // -------------------------------------------------------------
@@ -375,6 +591,200 @@ class FocusViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // -------------------------------------------------------------
+    // Habit Tracker Management
+    // -------------------------------------------------------------
+    fun toggleHabit(habitId: String) {
+        val habit = _habits.value.firstOrNull { it.id == habitId } ?: return
+        val willBeCompleted = !habit.isCompletedToday
+
+        val updatedHabits = _habits.value.map {
+            if (it.id == habitId) {
+                val newStreak = if (willBeCompleted) it.streakDays + 1 else (it.streakDays - 1).coerceAtLeast(0)
+                it.copy(isCompletedToday = willBeCompleted, streakDays = newStreak)
+            } else {
+                it
+            }
+        }
+        _habits.value = updatedHabits
+        repository.saveHabits(updatedHabits)
+
+        if (willBeCompleted) {
+            val starsEarned = habit.starReward
+            val newBalance = _wallet.value.balance + starsEarned
+            val newLifetime = _wallet.value.lifetimeStars + starsEarned
+            val newLedger = listOf(
+                LedgerItem(
+                    id = UUID.randomUUID().toString(),
+                    title = "Habit: ${habit.title}",
+                    source = "Habit Tracker",
+                    starsDelta = starsEarned,
+                    timestampFormatted = SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()).format(Date()),
+                    note = "+$starsEarned Stars earned for mindful consistency"
+                )
+            ) + _wallet.value.ledger
+
+            val updatedWallet = _wallet.value.copy(balance = newBalance, lifetimeStars = newLifetime, ledger = newLedger)
+            _wallet.value = updatedWallet
+            repository.saveWallet(updatedWallet)
+            showToast("Habit Completed! +$starsEarned Stars Awarded ★")
+        } else {
+            showToast("Habit uncompleted.")
+        }
+    }
+
+    fun addCustomHabit(title: String, category: String, reward: Int = 2) {
+        if (title.isBlank()) return
+        val newHabit = HabitItem(
+            id = "habit_${UUID.randomUUID()}",
+            title = title.trim(),
+            category = category.trim().ifEmpty { "Focus" },
+            streakDays = 1,
+            isCompletedToday = true,
+            starReward = reward.coerceIn(1, 10),
+            iconKey = "star"
+        )
+        val updated = _habits.value + newHabit
+        _habits.value = updated
+        repository.saveHabits(updated)
+
+        // Award stars for first completion
+        val newBalance = _wallet.value.balance + newHabit.starReward
+        val newLifetime = _wallet.value.lifetimeStars + newHabit.starReward
+        val updatedWallet = _wallet.value.copy(balance = newBalance, lifetimeStars = newLifetime)
+        _wallet.value = updatedWallet
+        repository.saveWallet(updatedWallet)
+
+        showToast("New habit added! +${newHabit.starReward} Stars awarded ★")
+    }
+
+    fun deleteHabit(habitId: String) {
+        val updated = _habits.value.filter { it.id != habitId }
+        _habits.value = updated
+        repository.saveHabits(updated)
+        showToast("Habit removed.")
+    }
+
+    fun linkHabitToTracker(habitId: String, trackerType: ExternalTrackerType, goal: String) {
+        val updatedHabits = _habits.value.map {
+            if (it.id == habitId) {
+                it.copy(
+                    linkedTracker = TrackerLink(
+                        trackerType = trackerType,
+                        metricGoal = goal,
+                        isAutoSync = true,
+                        lastSyncValue = "Linked to ${trackerType.displayName}"
+                    )
+                )
+            } else it
+        }
+        _habits.value = updatedHabits
+        repository.saveHabits(updatedHabits)
+        showToast("Linked to ${trackerType.displayName} ($goal)")
+        syncWithSupabase()
+    }
+
+    fun unlinkHabitFromTracker(habitId: String) {
+        val updatedHabits = _habits.value.map {
+            if (it.id == habitId) {
+                it.copy(linkedTracker = null)
+            } else it
+        }
+        _habits.value = updatedHabits
+        repository.saveHabits(updatedHabits)
+        showToast("Tracker unlinked.")
+        syncWithSupabase()
+    }
+
+    fun syncExternalTrackers() {
+        var completedCount = 0
+        var totalStarsEarned = 0
+        val updatedHabits = _habits.value.map { habit ->
+            if (habit.linkedTracker != null && !habit.isCompletedToday) {
+                completedCount++
+                totalStarsEarned += habit.starReward
+                habit.copy(
+                    isCompletedToday = true,
+                    streakDays = habit.streakDays + 1,
+                    linkedTracker = habit.linkedTracker.copy(lastSyncValue = "Synced: Goal Reached")
+                )
+            } else habit
+        }
+
+        if (completedCount > 0) {
+            _habits.value = updatedHabits
+            repository.saveHabits(updatedHabits)
+
+            val newBalance = _wallet.value.balance + totalStarsEarned
+            val newLifetime = _wallet.value.lifetimeStars + totalStarsEarned
+            val newLedger = listOf(
+                LedgerItem(
+                    id = UUID.randomUUID().toString(),
+                    title = "External Trackers Sync ($completedCount habits)",
+                    source = "Fitbit/Strava/Vivo/Phone",
+                    starsDelta = totalStarsEarned,
+                    timestampFormatted = SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()).format(Date()),
+                    note = "Auto-verified via external health telemetry"
+                )
+            ) + _wallet.value.ledger
+
+            val updatedWallet = _wallet.value.copy(balance = newBalance, lifetimeStars = newLifetime, ledger = newLedger)
+            _wallet.value = updatedWallet
+            repository.saveWallet(updatedWallet)
+            showToast("External Sync: $completedCount habits verified! +$totalStarsEarned Stars ★")
+        } else {
+            showToast("All linked external trackers are up to date.")
+        }
+        syncWithSupabase()
+    }
+
+    fun importHabitTrackerJson(rawContent: String): Boolean {
+        try {
+            val content = rawContent.trim()
+            if (content.startsWith("[")) {
+                val array = org.json.JSONArray(content)
+                val importedList = mutableListOf<HabitItem>()
+                for (i in 0 until array.length()) {
+                    val obj = array.getJSONObject(i)
+                    var tracker: TrackerLink? = null
+                    if (obj.has("tracker_type")) {
+                        try {
+                            tracker = TrackerLink(
+                                trackerType = ExternalTrackerType.valueOf(obj.getString("tracker_type")),
+                                metricGoal = obj.optString("tracker_goal", "Daily Goal"),
+                                isAutoSync = true,
+                                lastSyncValue = "Imported"
+                            )
+                        } catch (_: Exception) {}
+                    }
+                    importedList.add(
+                        HabitItem(
+                            id = obj.optString("id", "habit_${UUID.randomUUID()}"),
+                            title = obj.getString("title"),
+                            category = obj.optString("category", "Imported"),
+                            streakDays = obj.optInt("streakDays", 0),
+                            isCompletedToday = obj.optBoolean("isCompletedToday", false),
+                            starReward = obj.optInt("starReward", 2),
+                            iconKey = obj.optString("iconKey", "spa"),
+                            linkedTracker = tracker
+                        )
+                    )
+                }
+                if (importedList.isNotEmpty()) {
+                    _habits.value = importedList
+                    repository.saveHabits(importedList)
+                    showToast("Successfully imported ${importedList.size} habits from tracker file!")
+                    syncWithSupabase()
+                    return true
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        showToast("Could not parse habit tracker format.")
+        return false
+    }
+
+    // -------------------------------------------------------------
     // Schedule Configuration
     // -------------------------------------------------------------
     fun updateSchedule(newConfig: ScheduleConfig) {
@@ -387,13 +797,12 @@ class FocusViewModel(application: Application) : AndroidViewModel(application) {
     // -------------------------------------------------------------
     // Permissions Management
     // -------------------------------------------------------------
-    fun grantPermission(key: String) {
-        val updated = _permissions.value.map {
-            if (it.key == key) it.copy(granted = true, statusLabel = "Active") else it
+    fun requestPermission(context: Context, key: String) {
+        PermissionManager.requestPermissionByKey(context, key)
+        viewModelScope.launch {
+            delay(1000)
+            syncPermissionsWithSystem()
         }
-        _permissions.value = updated
-        repository.savePermission(key, true)
-        showToast("Permission granted! +30 Starlight earned.")
     }
 
     // -------------------------------------------------------------
@@ -416,29 +825,90 @@ class FocusViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // -------------------------------------------------------------
-    // Demo Time Travel Controls
+    // Celestial Streak Management & Milestones
     // -------------------------------------------------------------
-    fun advanceSimulatedTime(minutes: Long) {
-        _simulatedTimeMillis.value += minutes * 60 * 1000
-        evaluateCurrentInterval()
-        showToast("Fast forwarded $minutes minutes")
-    }
-
-    fun jumpToSpecificHour(hour24: Int, minute: Int = 0) {
-        val cal = Calendar.getInstance().apply {
-            timeInMillis = _simulatedTimeMillis.value
-            set(Calendar.HOUR_OF_DAY, hour24)
-            set(Calendar.MINUTE, minute)
-            set(Calendar.SECOND, 0)
+    fun claimStreakMilestone(milestone: StreakMilestone) {
+        val current = _streak.value
+        if (current.currentStreakDays < milestone.daysRequired) {
+            showToast("Need ${milestone.daysRequired} days streak to claim this reward!")
+            return
         }
-        _simulatedTimeMillis.value = cal.timeInMillis
-        evaluateCurrentInterval()
-        showToast("Jumped to ${String.format("%02d:%02d", hour24, minute)}")
+        if (current.claimedMilestones.contains(milestone.daysRequired)) {
+            showToast("Milestone reward already claimed!")
+            return
+        }
+
+        val newClaimed = current.claimedMilestones + milestone.daysRequired
+        val updatedStreak = current.copy(claimedMilestones = newClaimed)
+        _streak.value = updatedStreak
+        repository.saveCelestialStreak(updatedStreak)
+
+        val newBalance = _wallet.value.balance + milestone.bonusStars
+        val newLifetime = _wallet.value.lifetimeStars + milestone.bonusStars
+        val newLedger = listOf(
+            LedgerItem(
+                id = UUID.randomUUID().toString(),
+                title = "Milestone Bonus: ${milestone.daysRequired} Days Clean",
+                source = "Celestial Streak",
+                starsDelta = milestone.bonusStars,
+                timestampFormatted = SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()).format(Date()),
+                note = milestone.title
+            )
+        ) + _wallet.value.ledger
+
+        val updatedWallet = _wallet.value.copy(balance = newBalance, lifetimeStars = newLifetime, ledger = newLedger)
+        _wallet.value = updatedWallet
+        repository.saveWallet(updatedWallet)
+
+        showToast("Milestone Unlocked! +${milestone.bonusStars} Stars Awarded ★")
     }
 
-    fun resetToRealTime() {
-        _simulatedTimeMillis.value = System.currentTimeMillis()
-        evaluateCurrentInterval()
-        showToast("Time reset to real-world clock")
+    fun resetStreak() {
+        val current = _streak.value
+        val updated = current.copy(currentStreakDays = 0)
+        _streak.value = updated
+        repository.saveCelestialStreak(updated)
+        showToast("Celestial streak reset.")
+    }
+
+    // -------------------------------------------------------------
+    // Google OAuth & Supabase Cloud Synchronization
+    // -------------------------------------------------------------
+    fun signInWithGoogle(context: Context) {
+        viewModelScope.launch {
+            val result = authManager.signInWithGoogle(context)
+            if (result.isSuccess) {
+                val user = result.getOrNull()
+                showToast("Signed in as ${user?.displayName ?: "Google User"}")
+                // Auto sync immediately upon login
+                syncWithSupabase()
+            } else {
+                val errorMsg = result.exceptionOrNull()?.message ?: "Google Sign-In failed"
+                showToast(errorMsg)
+            }
+        }
+    }
+
+    fun signOut() {
+        authManager.signOut()
+        showToast("Signed out from Google Account.")
+    }
+
+    fun clearAuthError() {
+        authManager.clearError()
+    }
+
+    fun syncWithSupabase() {
+        val user = currentUser.value
+        val userId = user?.uid ?: "local_device_${repository.hashCode()}"
+        viewModelScope.launch {
+            val result = supabaseRepository.syncAll(userId)
+            if (result.isSuccess) {
+                showToast("Data synchronized with Supabase backend.")
+            } else {
+                showToast("Sync completed locally.")
+            }
+        }
     }
 }
+

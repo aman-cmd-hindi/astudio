@@ -54,13 +54,13 @@ fun AppLauncherDock(
                         modifier = Modifier.size(16.dp)
                     )
                     Text(
-                        text = "App Simulator Dock",
+                        text = "Quick App Launch & Shield Dock",
                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                         color = OnSurface
                     )
                 }
                 Text(
-                    text = "Tap to test shield",
+                    text = "Tap to open / shield test",
                     style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
                     color = OnSurfaceVariant
                 )

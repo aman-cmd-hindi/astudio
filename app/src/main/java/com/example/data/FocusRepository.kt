@@ -244,6 +244,161 @@ class FocusRepository(context: Context) {
         prefs.edit().putBoolean("perm_$key", granted).apply()
     }
 
+    fun getCelestialStreak(): CelestialStreak {
+        val current = prefs.getInt("streak_current", 5)
+        val best = prefs.getInt("streak_best", 14)
+        val claimedStr = prefs.getString("streak_claimed", "3") ?: "3"
+        val claimed = claimedStr.split(",").mapNotNull { it.trim().toIntOrNull() }.toSet()
+        val lastDate = prefs.getString("streak_last_date", "Today") ?: "Today"
+
+        return CelestialStreak(
+            currentStreakDays = current,
+            bestStreakDays = best,
+            claimedMilestones = claimed,
+            lastEvaluatedDateFormatted = lastDate
+        )
+    }
+
+    fun saveCelestialStreak(streak: CelestialStreak) {
+        prefs.edit()
+            .putInt("streak_current", streak.currentStreakDays)
+            .putInt("streak_best", streak.bestStreakDays)
+            .putString("streak_claimed", streak.claimedMilestones.joinToString(","))
+            .putString("streak_last_date", streak.lastEvaluatedDateFormatted)
+            .apply()
+    }
+
+    fun getScreenTimeTarget(): ScreenTimeTargetConfig {
+        val h = prefs.getInt("target_hours", 40)
+        val m = prefs.getInt("target_minutes", 22)
+        return ScreenTimeTargetConfig(targetHours = h, targetMinutes = m)
+    }
+
+    fun saveScreenTimeTarget(config: ScreenTimeTargetConfig) {
+        prefs.edit()
+            .putInt("target_hours", config.targetHours)
+            .putInt("target_minutes", config.targetMinutes)
+            .apply()
+    }
+
+    fun getHabits(): List<HabitItem> {
+        val json = prefs.getString("habits_json", null)
+        if (!json.isNullOrEmpty()) {
+            try {
+                val array = JSONArray(json)
+                val list = mutableListOf<HabitItem>()
+                for (i in 0 until array.length()) {
+                    val obj = array.getJSONObject(i)
+                    var tracker: TrackerLink? = null
+                    if (obj.has("tracker_type")) {
+                        try {
+                            val typeName = obj.getString("tracker_type")
+                            val type = ExternalTrackerType.valueOf(typeName)
+                            val goal = obj.optString("tracker_goal", "Daily Goal")
+                            val autoSync = obj.optBoolean("tracker_auto_sync", true)
+                            val lastVal = obj.optString("tracker_last_val", "Active")
+                            tracker = TrackerLink(type, goal, autoSync, lastVal)
+                        } catch (e: Exception) {
+                            // Ignored if unknown tracker
+                        }
+                    }
+
+                    list.add(
+                        HabitItem(
+                            id = obj.getString("id"),
+                            title = obj.getString("title"),
+                            category = obj.getString("category"),
+                            streakDays = obj.optInt("streakDays", 0),
+                            isCompletedToday = obj.optBoolean("isCompletedToday", false),
+                            starReward = obj.optInt("starReward", 2),
+                            iconKey = obj.optString("iconKey", "spa"),
+                            linkedTracker = tracker
+                        )
+                    )
+                }
+                if (list.isNotEmpty()) return list
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+
+        return listOf(
+            HabitItem(
+                id = "habit_fitbit_1",
+                title = "Walk 10,000 Steps",
+                category = "Fitness",
+                streakDays = 8,
+                isCompletedToday = true,
+                starReward = 3,
+                iconKey = "directions_walk",
+                linkedTracker = TrackerLink(
+                    trackerType = ExternalTrackerType.GOOGLE_FITBIT,
+                    metricGoal = "10,000 steps daily",
+                    isAutoSync = true,
+                    lastSyncValue = "10,420 steps logged"
+                )
+            ),
+            HabitItem(
+                id = "habit_strava_1",
+                title = "30m Cardio / Cycling Ride",
+                category = "Active",
+                streakDays = 4,
+                isCompletedToday = false,
+                starReward = 4,
+                iconKey = "fitness_center",
+                linkedTracker = TrackerLink(
+                    trackerType = ExternalTrackerType.STRAVA,
+                    metricGoal = "30 mins activity",
+                    isAutoSync = true,
+                    lastSyncValue = "Synced via Strava"
+                )
+            ),
+            HabitItem(
+                id = "habit_vivo_1",
+                title = "Hydration & Active Recovery",
+                category = "Health",
+                streakDays = 6,
+                isCompletedToday = false,
+                starReward = 2,
+                iconKey = "water_drop",
+                linkedTracker = TrackerLink(
+                    trackerType = ExternalTrackerType.VIVO_TRACKER,
+                    metricGoal = "2,500 mL & Active Vitals",
+                    isAutoSync = true,
+                    lastSyncValue = "Vivo Health Monitor"
+                )
+            ),
+            HabitItem("habit_1", "Morning Digital Fast", "Mindfulness", 5, isCompletedToday = true, starReward = 2, iconKey = "wb_sunny"),
+            HabitItem("habit_2", "No Phone During Meals", "Health", 7, isCompletedToday = false, starReward = 2, iconKey = "restaurant"),
+            HabitItem("habit_3", "30m Offline Reading", "Focus", 3, isCompletedToday = false, starReward = 3, iconKey = "menu_book"),
+            HabitItem("habit_4", "Phone Docked by 10 PM", "Sleep", 12, isCompletedToday = false, starReward = 3, iconKey = "bedtime"),
+            HabitItem("habit_5", "90m Deep Work Sanctuary", "Productivity", 4, isCompletedToday = true, starReward = 4, iconKey = "self_improvement")
+        )
+    }
+
+    fun saveHabits(habits: List<HabitItem>) {
+        val array = JSONArray()
+        for (h in habits) {
+            val obj = JSONObject().apply {
+                put("id", h.id)
+                put("title", h.title)
+                put("category", h.category)
+                put("streakDays", h.streakDays)
+                put("isCompletedToday", h.isCompletedToday)
+                put("starReward", h.starReward)
+                put("iconKey", h.iconKey)
+                h.linkedTracker?.let { t ->
+                    put("tracker_type", t.trackerType.name)
+                    put("tracker_goal", t.metricGoal)
+                    put("tracker_auto_sync", t.isAutoSync)
+                    put("tracker_last_val", t.lastSyncValue)
+                }
+            }
+            array.put(obj)
+        }
+        prefs.edit().putString("habits_json", array.toString()).apply()
+    }
+
     fun resetAllData() {
         prefs.edit().clear().apply()
     }

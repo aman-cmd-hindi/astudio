@@ -39,8 +39,7 @@ fun ShieldOverlayScreen(
 ) {
     val wallet by viewModel.wallet.collectAsState()
     val schedule by viewModel.schedule.collectAsState()
-    val simulatedTimeMillis by viewModel.simulatedTimeMillis.collectAsState()
-    val remainingIntervalText = viewModel.getRemainingIntervalText(simulatedTimeMillis)
+    val remainingIntervalText = viewModel.getRemainingIntervalText()
 
     Box(
         modifier = modifier

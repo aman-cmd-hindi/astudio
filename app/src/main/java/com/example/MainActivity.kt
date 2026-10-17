@@ -1,5 +1,6 @@
 package com.example
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -8,11 +9,9 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.rounded.*
@@ -24,12 +23,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.ScreenTab
 import com.example.ui.components.AmbientGlassBackdrop
-import com.example.ui.components.FloatingDemoTimeController
 import com.example.ui.screens.*
 import com.example.ui.theme.*
 import com.example.viewmodel.FocusViewModel
@@ -40,9 +39,24 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        handleShieldIntent(intent)
         setContent {
             AetherFocusTheme {
                 AetherFocusApp(viewModel = viewModel)
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleShieldIntent(intent)
+    }
+
+    private fun handleShieldIntent(intent: Intent?) {
+        if (intent?.action == "com.example.ACTION_SHOW_SHIELD") {
+            val appId = intent.getStringExtra("EXTRA_APP_ID")
+            if (!appId.isNullOrEmpty()) {
+                viewModel.showShieldForPackage(appId)
             }
         }
     }
@@ -50,15 +64,12 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun AetherFocusApp(viewModel: FocusViewModel) {
+    val context = LocalContext.current
     val currentTab by viewModel.currentTab.collectAsState()
-    val simulatedTimeMillis by viewModel.simulatedTimeMillis.collectAsState()
-    val isDemoExpanded by viewModel.isDemoControlsExpanded.collectAsState()
-    val isRestricted = viewModel.isWithinInterval(simulatedTimeMillis)
     val wallet by viewModel.wallet.collectAsState()
 
     val activeShieldApp by viewModel.activeShieldApp.collectAsState()
     val unlockConfirmationApp by viewModel.unlockConfirmationApp.collectAsState()
-    val currentlyOpenApp by viewModel.currentlyOpenSimulatedApp.collectAsState()
     val toastMessage by viewModel.toastMessage.collectAsState()
 
     var showPermissionsScreen by remember { mutableStateOf(false) }
@@ -67,15 +78,14 @@ fun AetherFocusApp(viewModel: FocusViewModel) {
     BackHandler(
         enabled = activeShieldApp != null ||
                 unlockConfirmationApp != null ||
-                currentlyOpenApp != null ||
                 showPermissionsScreen ||
                 currentTab != ScreenTab.HOME
     ) {
         when {
             unlockConfirmationApp != null -> viewModel.cancelUnlockConfirmation()
             activeShieldApp != null -> viewModel.dismissShield()
-            currentlyOpenApp != null -> viewModel.closeSimulatedApp()
             showPermissionsScreen -> showPermissionsScreen = false
+            currentTab == ScreenTab.PRIVACY_POLICY -> viewModel.setTab(ScreenTab.SETTINGS)
             currentTab != ScreenTab.HOME -> viewModel.setTab(ScreenTab.HOME)
         }
     }
@@ -91,7 +101,7 @@ fun AetherFocusApp(viewModel: FocusViewModel) {
                 ) {
                     // Top App Header
                     Surface(
-                        color = SurfaceContainerLowest.copy(alpha = 0.70f),
+                        color = SurfaceContainerLowest.copy(alpha = 0.75f),
                         shadowElevation = 4.dp,
                         modifier = Modifier.fillMaxWidth()
                     ) {
@@ -110,7 +120,7 @@ fun AetherFocusApp(viewModel: FocusViewModel) {
                                 Box(
                                     contentAlignment = Alignment.Center,
                                     modifier = Modifier
-                                        .size(34.dp)
+                                        .size(36.dp)
                                         .clip(CircleShape)
                                         .background(IrisPurpleSecondaryContainer)
                                 ) {
@@ -118,7 +128,7 @@ fun AetherFocusApp(viewModel: FocusViewModel) {
                                         imageVector = Icons.Filled.Star,
                                         contentDescription = "Logo",
                                         tint = StarGoldPrimary,
-                                        modifier = Modifier.size(18.dp)
+                                        modifier = Modifier.size(20.dp)
                                     )
                                 }
                                 Column {
@@ -133,12 +143,14 @@ fun AetherFocusApp(viewModel: FocusViewModel) {
                                     )
                                     Text(
                                         text = when (currentTab) {
-                                            ScreenTab.HOME -> "Home"
-                                            ScreenTab.SCREEN_TIME -> "Screen Time"
-                                            ScreenTab.BLOCKED_APPS -> "Blocked Apps"
-                                            ScreenTab.WALLET -> "Wallet"
-                                            ScreenTab.SETTINGS -> "Settings"
-                                            ScreenTab.SCHEDULE -> "Schedule"
+                                            ScreenTab.HOME -> "Home Sanctuary"
+                                            ScreenTab.SCREEN_TIME -> "Screen Time Analysis"
+                                            ScreenTab.BLOCKED_APPS -> "App Blocker"
+                                            ScreenTab.HABITS -> "Habit Tracker"
+                                            ScreenTab.WALLET -> "Star Wallet"
+                                            ScreenTab.SETTINGS -> "Settings & Privacy"
+                                            ScreenTab.SCHEDULE -> "Focus Schedule"
+                                            ScreenTab.PRIVACY_POLICY -> "Privacy Policy"
                                         },
                                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                                         color = OnSurface
@@ -160,7 +172,7 @@ fun AetherFocusApp(viewModel: FocusViewModel) {
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                                     ) {
                                         Icon(
                                             imageVector = Icons.Filled.HotelClass,
@@ -179,14 +191,14 @@ fun AetherFocusApp(viewModel: FocusViewModel) {
                                 Box(
                                     contentAlignment = Alignment.Center,
                                     modifier = Modifier
-                                        .size(34.dp)
+                                        .size(36.dp)
                                         .clip(CircleShape)
                                         .background(StarGoldPrimary)
                                         .clickable { viewModel.setTab(ScreenTab.SETTINGS) }
                                 ) {
                                     Icon(
-                                        imageVector = Icons.Filled.Person,
-                                        contentDescription = "Profile",
+                                        imageVector = Icons.Filled.Shield,
+                                        contentDescription = "Settings",
                                         tint = OnPrimary,
                                         modifier = Modifier.size(18.dp)
                                     )
@@ -194,34 +206,19 @@ fun AetherFocusApp(viewModel: FocusViewModel) {
                             }
                         }
                     }
-
-                    Spacer(Modifier.height(6.dp))
-
-                    // Floating Demo Time Machine HUD Pill
-                    FloatingDemoTimeController(
-                        simulatedTimeMillis = simulatedTimeMillis,
-                        isExpanded = isDemoExpanded,
-                        onToggleExpand = { viewModel.toggleDemoControls() },
-                        onAdvanceTime = { mins -> viewModel.advanceSimulatedTime(mins) },
-                        onJump11PM = { viewModel.jumpToSpecificHour(23, 0) },
-                        onJump11AM = { viewModel.jumpToSpecificHour(11, 0) },
-                        onResetRealTime = { viewModel.resetToRealTime() },
-                        onTriggerPayout = { viewModel.triggerWeeklyPayoutCheck() },
-                        isRestricted = isRestricted
-                    )
                 }
             },
             bottomBar = {
-                // Elevated Frosted Pill Dock
+                // Elevated Frosted Glass Dock
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .navigationBarsPadding()
-                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
                 ) {
                     Surface(
                         shape = CircleShape,
-                        color = SurfaceContainer.copy(alpha = 0.85f),
+                        color = SurfaceContainer.copy(alpha = 0.90f),
                         border = androidx.compose.foundation.BorderStroke(1.dp, GlassBorderDefault),
                         shadowElevation = 16.dp,
                         modifier = Modifier
@@ -248,24 +245,30 @@ fun AetherFocusApp(viewModel: FocusViewModel) {
                             )
 
                             NavBarItem(
-                                label = "Shield",
+                                label = "Blocker",
                                 icon = Icons.Filled.Shield,
                                 isSelected = currentTab == ScreenTab.BLOCKED_APPS,
                                 onClick = { viewModel.setTab(ScreenTab.BLOCKED_APPS) }
                             )
 
                             NavBarItem(
+                                label = "Habits",
+                                icon = Icons.Filled.SelfImprovement,
+                                isSelected = currentTab == ScreenTab.HABITS,
+                                onClick = { viewModel.setTab(ScreenTab.HABITS) }
+                            )
+
+                            NavBarItem(
                                 label = "Wallet",
                                 icon = Icons.Filled.Stars,
                                 isSelected = currentTab == ScreenTab.WALLET,
-                                hasBadge = true,
                                 onClick = { viewModel.setTab(ScreenTab.WALLET) }
                             )
 
                             NavBarItem(
                                 label = "Settings",
                                 icon = Icons.Filled.Tune,
-                                isSelected = currentTab == ScreenTab.SETTINGS,
+                                isSelected = currentTab == ScreenTab.SETTINGS || currentTab == ScreenTab.PRIVACY_POLICY,
                                 onClick = { viewModel.setTab(ScreenTab.SETTINGS) }
                             )
                         }
@@ -290,12 +293,17 @@ fun AetherFocusApp(viewModel: FocusViewModel) {
                         ScreenTab.HOME -> HomeScreen(viewModel = viewModel)
                         ScreenTab.SCREEN_TIME -> ScreenTimeScreen(viewModel = viewModel)
                         ScreenTab.BLOCKED_APPS -> BlockedAppsScreen(viewModel = viewModel)
+                        ScreenTab.HABITS -> HabitsScreen(viewModel = viewModel)
                         ScreenTab.WALLET -> WalletScreen(viewModel = viewModel)
                         ScreenTab.SETTINGS -> SettingsScreen(
                             viewModel = viewModel,
-                            onOpenPermissions = { showPermissionsScreen = true }
+                            onOpenPermissions = { showPermissionsScreen = true },
+                            onOpenPrivacyPolicy = { viewModel.setTab(ScreenTab.PRIVACY_POLICY) }
                         )
                         ScreenTab.SCHEDULE -> ScheduleScreen(viewModel = viewModel)
+                        ScreenTab.PRIVACY_POLICY -> PrivacyPolicyScreen(
+                            onBack = { viewModel.setTab(ScreenTab.SETTINGS) }
+                        )
                     }
                 }
 
@@ -331,20 +339,16 @@ fun AetherFocusApp(viewModel: FocusViewModel) {
         if (showPermissionsScreen) {
             PermissionsScreen(
                 viewModel = viewModel,
-                onContinue = { showPermissionsScreen = false }
-            )
-        }
-
-        // Simulated Unlocked App View
-        if (currentlyOpenApp != null) {
-            SimulatedAppView(
-                app = currentlyOpenApp!!,
-                onClose = { viewModel.closeSimulatedApp() }
+                onContinue = { showPermissionsScreen = false },
+                onOpenPrivacyPolicy = {
+                    showPermissionsScreen = false
+                    viewModel.setTab(ScreenTab.PRIVACY_POLICY)
+                }
             )
         }
 
         // Full Screen Blocked-App Shield Overlay
-        if (activeShieldApp != null && currentlyOpenApp == null) {
+        if (activeShieldApp != null) {
             ShieldOverlayScreen(
                 app = activeShieldApp!!,
                 viewModel = viewModel,
@@ -359,7 +363,7 @@ fun AetherFocusApp(viewModel: FocusViewModel) {
                 app = unlockConfirmationApp!!,
                 currentBalance = wallet.balance,
                 cost = 5,
-                onConfirm = { viewModel.confirmUnlockWithStars(unlockConfirmationApp!!, cost = 5) },
+                onConfirm = { viewModel.confirmUnlockWithStars(unlockConfirmationApp!!, cost = 5, context = context) },
                 onCancel = { viewModel.cancelUnlockConfirmation() }
             )
         }
@@ -379,7 +383,7 @@ fun NavBarItem(
         modifier = Modifier
             .clip(CircleShape)
             .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 6.dp)
+            .padding(horizontal = 8.dp, vertical = 4.dp)
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -390,7 +394,7 @@ fun NavBarItem(
                     imageVector = icon,
                     contentDescription = label,
                     tint = if (isSelected) StarGoldPrimary else OnSurfaceVariant,
-                    modifier = Modifier.size(22.dp)
+                    modifier = Modifier.size(20.dp)
                 )
                 if (hasBadge) {
                     Box(
@@ -407,7 +411,7 @@ fun NavBarItem(
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelSmall.copy(
-                    fontSize = 10.sp,
+                    fontSize = 9.sp,
                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
                 ),
                 color = if (isSelected) StarGoldPrimary else OnSurfaceVariant

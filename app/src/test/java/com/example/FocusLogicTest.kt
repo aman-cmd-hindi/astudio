@@ -139,4 +139,36 @@ class FocusLogicTest {
         val condition2 = screenTime.totalWeeklyMinutes < 600
         assertFalse("Should fail payout when weekly usage exceeds 10 hours", condition2)
     }
+
+    @Test
+    fun testCelestialStreak_MilestoneEligibility() {
+        val streak = com.example.model.CelestialStreak(
+            currentStreakDays = 7,
+            bestStreakDays = 14,
+            claimedMilestones = setOf(3)
+        )
+
+        val milestone3 = com.example.model.StreakMilestone(3, 2, "3-Day Starlight Spark")
+        val milestone7 = com.example.model.StreakMilestone(7, 5, "7-Day Orbit Sanctuary")
+        val milestone14 = com.example.model.StreakMilestone(14, 10, "14-Day Cosmic Harmony")
+
+        assertTrue("Milestone 3 should be claimed", streak.claimedMilestones.contains(milestone3.daysRequired))
+        assertTrue("Milestone 7 should be reached and ready to claim", streak.currentStreakDays >= milestone7.daysRequired && !streak.claimedMilestones.contains(milestone7.daysRequired))
+        assertFalse("Milestone 14 should not be reached yet", streak.currentStreakDays >= milestone14.daysRequired)
+    }
+
+    @Test
+    fun testCelestialStreak_AdvanceStreak() {
+        val initialStreak = com.example.model.CelestialStreak(
+            currentStreakDays = 14,
+            bestStreakDays = 14
+        )
+
+        val newCurrent = initialStreak.currentStreakDays + 1
+        val newBest = maxOf(initialStreak.bestStreakDays, newCurrent)
+        val advanced = initialStreak.copy(currentStreakDays = newCurrent, bestStreakDays = newBest)
+
+        assertEquals(15, advanced.currentStreakDays)
+        assertEquals(15, advanced.bestStreakDays)
+    }
 }

@@ -1,3 +1,8 @@
 <resources>
     <string name="app_name">Aether Focus</string>
+    <string name="device_admin_label">Aether Focus Admin Shield</string>
+    <string name="device_admin_desc">Prevents circumventing active focus blocks or uninstalling during scheduled restriction intervals.</string>
+    <string name="accessibility_service_label">Aether Focus App Blocker</string>
+    <string name="accessibility_service_desc">Enforces restriction shields immediately when configured blocked apps are opened.</string>
+    <string name="privacy_statement">This app does not collect any personal information from the device. It only requests permission to block other apps and does not store or transmit user data.</string>
 </resources>

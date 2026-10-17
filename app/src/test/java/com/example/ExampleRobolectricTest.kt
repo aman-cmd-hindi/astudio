@@ -18,4 +18,14 @@ class ExampleRobolectricTest {
     val appName = context.getString(R.string.app_name)
     assertEquals("Aether Focus", appName)
   }
+
+  @Test
+  fun `verify required privacy statement string exists and is valid`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val statement = context.getString(R.string.privacy_statement)
+    assertEquals(
+      "This app does not collect any personal information from the device. It only requests permission to block other apps and does not store or transmit user data.",
+      statement
+    )
+  }
 }
